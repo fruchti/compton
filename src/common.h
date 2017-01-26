@@ -491,15 +491,15 @@ typedef struct {
   GLuint prog;
   /// Location of uniform "opacity" in window GLSL program.
   GLint unifm_opacity;
-  /// Location of uniform "invert_color" in blur GLSL program.
+  /// Location of uniform "invert_color" in window GLSL program.
   GLint unifm_invert_color;
-  /// Location of uniform "offset_x" in blur GLSL program.
+  /// Location of uniform "offset_x" in window GLSL program.
   GLint unifm_offset_x;
-  /// Location of uniform "offset_y" in blur GLSL program.
+  /// Location of uniform "offset_y" in window GLSL program.
   GLint unifm_offset_y;
-  /// Location of uniform "scale_x" in blur GLSL program.
+  /// Location of uniform "scale_x" in window GLSL program.
   GLint unifm_scale_x;
-  /// Location of uniform "scale_y" in blur GLSL program.
+  /// Location of uniform "scale_y" in window GLSL program.
   GLint unifm_scale_y;
   /// Location of uniform "tex" in window GLSL program.
   GLint unifm_tex;
