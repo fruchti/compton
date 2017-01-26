@@ -493,6 +493,14 @@ typedef struct {
   GLint unifm_opacity;
   /// Location of uniform "invert_color" in blur GLSL program.
   GLint unifm_invert_color;
+  /// Location of uniform "offset_x" in blur GLSL program.
+  GLint unifm_offset_x;
+  /// Location of uniform "offset_y" in blur GLSL program.
+  GLint unifm_offset_y;
+  /// Location of uniform "scale_x" in blur GLSL program.
+  GLint unifm_scale_x;
+  /// Location of uniform "scale_y" in blur GLSL program.
+  GLint unifm_scale_y;
   /// Location of uniform "tex" in window GLSL program.
   GLint unifm_tex;
 } glx_prog_main_t;
@@ -501,6 +509,10 @@ typedef struct {
   .prog = 0, \
   .unifm_opacity = -1, \
   .unifm_invert_color = -1, \
+  .unifm_offset_x = -1, \
+  .unifm_offset_y = -1, \
+  .unifm_scale_x = -1, \
+  .unifm_scale_y = -1, \
   .unifm_tex = -1, \
 }
 
