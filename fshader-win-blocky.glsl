@@ -1,8 +1,7 @@
 uniform float opacity;
-uniform float offset_y;
-uniform float offset_x;
-uniform float scale_y;
-uniform float scale_x;
+uniform uvec2 position;
+uniform uvec2 size;
+uniform vec2 scale;
 uniform bool invert_color;
 uniform sampler2D tex;
 
@@ -18,11 +17,11 @@ void main()
     const float rectThresh = 0.5;
     const float squareThresh = 0.8;
 
-    float rectXLineWidth = 1.0 * scale_x;
-    float rectYLineWidth = 1.0 * scale_y;
+    float rectXLineWidth = 1.0 * scale.x;
+    float rectYLineWidth = 1.0 * scale.y;
     const int nRects = 5;
-    float rectXSpace = 9.0 * scale_x;
-    float rectYSpace = 9.0 * scale_y;
+    float rectXSpace = 9.0 * scale.x;
+    float rectYSpace = 9.0 * scale.y;
     const vec4 rectColor = vec4(0.0, 0.4, 1.0, 1.0);
 
     if(opacity < rectThresh)
@@ -56,7 +55,7 @@ void main()
     {
         const float blockXSize = 420.0;
         const float blockYSize = 170.0;
-        float block = floor((x / scale_x + offset_x) / blockXSize) + 0.47 * floor((y / scale_y + offset_y) / blockYSize);
+        float block = floor((x / scale.x + position.x) / blockXSize) + 0.47 * floor((y / scale.y + position.y) / blockYSize);
         if(mod(block / ((opacity - rectThresh) / (squareThresh - rectThresh)), 1.5) < 0.1)
         {
             nopacity = opacity * 0.5;

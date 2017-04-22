@@ -493,14 +493,12 @@ typedef struct {
   GLint unifm_opacity;
   /// Location of uniform "invert_color" in window GLSL program.
   GLint unifm_invert_color;
-  /// Location of uniform "offset_x" in window GLSL program.
-  GLint unifm_offset_x;
-  /// Location of uniform "offset_y" in window GLSL program.
-  GLint unifm_offset_y;
-  /// Location of uniform "scale_x" in window GLSL program.
-  GLint unifm_scale_x;
-  /// Location of uniform "scale_y" in window GLSL program.
-  GLint unifm_scale_y;
+  /// Location of uniform "position" in window GLSL program.
+  GLint unifm_position;
+  /// Location of uniform "size" in window GLSL program.
+  GLint unifm_size;
+  /// Location of uniform "scale" in window GLSL program.
+  GLint unifm_scale;
   /// Location of uniform "tex" in window GLSL program.
   GLint unifm_tex;
 } glx_prog_main_t;
@@ -509,10 +507,9 @@ typedef struct {
   .prog = 0, \
   .unifm_opacity = -1, \
   .unifm_invert_color = -1, \
-  .unifm_offset_x = -1, \
-  .unifm_offset_y = -1, \
-  .unifm_scale_x = -1, \
-  .unifm_scale_y = -1, \
+  .unifm_position = -1, \
+  .unifm_size = -1, \
+  .unifm_scale = -1, \
   .unifm_tex = -1, \
 }
 
