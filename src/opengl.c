@@ -289,10 +289,9 @@ glx_free_prog_main(session_t *ps, glx_prog_main_t *pprogram) {
   }
   pprogram->unifm_opacity = -1;
   pprogram->unifm_invert_color = -1;
-  pprogram->unifm_offset_x = -1;
-  pprogram->unifm_offset_y = -1;
-  pprogram->unifm_scale_x = -1;
-  pprogram->unifm_scale_y = -1;
+  pprogram->unifm_position = -1;
+  pprogram->unifm_size = -1;
+  pprogram->unifm_scale = -1;
   pprogram->unifm_tex = -1;
 }
 
@@ -561,10 +560,9 @@ glx_load_prog_main(session_t *ps,
     }
   P_GET_UNIFM_LOC("opacity", unifm_opacity);
   P_GET_UNIFM_LOC("invert_color", unifm_invert_color);
-  P_GET_UNIFM_LOC("offset_x", unifm_offset_x);
-  P_GET_UNIFM_LOC("offset_y", unifm_offset_y);
-  P_GET_UNIFM_LOC("scale_x", unifm_scale_x);
-  P_GET_UNIFM_LOC("scale_y", unifm_scale_y);
+  P_GET_UNIFM_LOC("position", unifm_position);
+  P_GET_UNIFM_LOC("size", unifm_size);
+  P_GET_UNIFM_LOC("scale", unifm_scale);
   P_GET_UNIFM_LOC("tex", unifm_tex);
 #undef P_GET_UNIFM_LOC
 
@@ -1562,14 +1560,12 @@ glx_render_(session_t *ps, const glx_texture_t *ptex,
       glUniform1i(pprogram->unifm_invert_color, neg);
     if (pprogram->unifm_tex >= 0)
       glUniform1i(pprogram->unifm_tex, 0);
-    if (pprogram->unifm_offset_x >= 0)
-      glUniform1f(pprogram->unifm_offset_x, (float)dx);
-    if (pprogram->unifm_offset_y >= 0)
-      glUniform1f(pprogram->unifm_offset_y, (float)dy);
-    if (pprogram->unifm_scale_x >= 0)
-      glUniform1f(pprogram->unifm_scale_x, 1.0f / width);
-    if (pprogram->unifm_scale_y >= 0)
-      glUniform1f(pprogram->unifm_scale_y, 1.0f / height);
+    if (pprogram->unifm_position >= 0)
+      glUniform2ui(pprogram->unifm_position, dx, dy);
+    if (pprogram->unifm_size >= 0)
+      glUniform2ui(pprogram->unifm_size, width, height);
+    if (pprogram->unifm_scale >= 0)
+      glUniform2f(pprogram->unifm_scale, 1.0f / width, 1.0f / height);
   }
 #endif
 
