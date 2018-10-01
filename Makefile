@@ -110,21 +110,26 @@ CFG += -DCOMPTON_VERSION="\"$(COMPTON_VERSION)\""
 
 LDFLAGS ?= -Wl,-O1 -Wl,--as-needed
 
-ifeq "$(CFG_DEV)" ""
-  CFLAGS ?= -DNDEBUG -O2 -D_FORTIFY_SOURCE=2
-else
-  CC = clang
-  export LD_ALTEXEC = /usr/bin/ld.gold
-  OBJS += backtrace-symbols.o
-  LIBS += -lbfd
+BUILD_TYPE ?= "Debug"
+
+ifeq "$(BUILD_TYPE)" "Release"
+  CFLAGS += -DNDEBUG -O2 -D_FORTIFY_SOURCE=2
+else ifeq "$(BUILD_TYPE)" "Debug"
   CFLAGS += -ggdb -Wshadow
-  # CFLAGS += -Weverything -Wno-disabled-macro-expansion -Wno-padded -Wno-gnu
+endif
+
+ifeq "$(ENABLE_SAN)" "1"
+  CFLAGS += -fsanitize=address,undefined
+else ifeq "$(ENABLE_SAN)" "thread"
+  CFLAGS += -fsanitize=thread
+else ifeq "$(ENABLE_SAN)" "memory"
+  CFLAGS += -fsanitize=memory
 endif
 
 LIBS += $(shell pkg-config --libs $(PACKAGES))
 INCS += $(shell pkg-config --cflags $(PACKAGES))
 
-CFLAGS += -Wall
+CFLAGS += -Wall -Wimplicit-fallthrough
 
 BINS = compton bin/compton-trans
 MANPAGES = man/compton.1 man/compton-trans.1

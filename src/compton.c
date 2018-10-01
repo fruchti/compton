@@ -454,6 +454,8 @@ win_build_shadow(session_t *ps, win *w, double opacity) {
   const int width = w->newW; // TODO!
   const int height = w->newH;
 
+  Picture *shadow_to_apply;
+
   XImage *shadow_image = NULL;
   Pixmap shadow_pixmap = None, shadow_pixmap_argb = None;
   Picture shadow_picture = None, shadow_picture_argb = None;
@@ -484,7 +486,14 @@ win_build_shadow(session_t *ps, win *w, double opacity) {
 
   XPutImage(ps->dpy, shadow_pixmap, gc, shadow_image, 0, 0, 0, 0,
     shadow_image->width, shadow_image->height);
-  XRenderComposite(ps->dpy, PictOpSrc, ps->cshadow_picture, shadow_picture,
+
+  if (win_is_focused_real(ps, w)) {
+    shadow_to_apply  = &ps->cshadow_picture_focused;
+  } else {
+    shadow_to_apply  = &ps->cshadow_picture;
+  }
+
+  XRenderComposite(ps->dpy, PictOpSrc, *shadow_to_apply, shadow_picture,
       shadow_picture_argb, 0, 0, 0, 0, 0, 0,
       shadow_image->width, shadow_image->height);
 
@@ -1160,7 +1169,7 @@ paint_preprocess(session_t *ps, win *list) {
     // Data expiration
     {
       // Remove built shadow if needed
-      if (w->flags & WFLAG_SIZE_CHANGE)
+      if (w->flags & (WFLAG_SIZE_CHANGE | WFLAG_FOCUS_CHANGE))
         free_paint(ps, &w->shadow_paint);
 
       // Destroy reg_ignore on all windows if they should expire
@@ -1359,6 +1368,7 @@ static inline void
 win_paint_shadow(session_t *ps, win *w,
     XserverRegion reg_paint, const reg_data_t *pcache_reg) {
   // Bind shadow pixmap to GLX texture if needed
+
   paint_bind_tex(ps, &w->shadow_paint, 0, 0, 32, false);
 
   if (!paint_isvalid(ps, &w->shadow_paint)) {
@@ -1776,6 +1786,8 @@ win_paint_win(session_t *ps, win *w, XserverRegion reg_paint,
             reg_paint, pcache_reg);
         break;
 #endif
+      default:
+        assert(false);
     }
   }
 
@@ -1801,6 +1813,7 @@ rebuild_shadow_exclude_reg(session_t *ps) {
   XRectangle rect = geom_to_rect(ps, &ps->o.shadow_exclude_reg_geom, NULL);
   ps->shadow_exclude_reg = rect_to_reg(ps, &rect);
 }
+
 
 static void
 paint_all(session_t *ps, XserverRegion region, XserverRegion region_real, win *t) {
@@ -2071,7 +2084,7 @@ paint_all(session_t *ps, XserverRegion region, XserverRegion region_real, win *t
       glx_render(ps, ps->tgt_buffer.ptex, 0, 0, 0, 0,
           ps->root_width, ps->root_height, 0, 1.0, false, false,
           region_real, NULL, NULL);
-      // No break here!
+      // falls through
     case BKEND_GLX:
       if (ps->o.glx_use_copysubbuffermesa)
         glx_swap_copysubbuffermesa(ps, region_real);
@@ -2138,7 +2151,7 @@ add_damage(session_t *ps, XserverRegion damage) {
 }
 
 static void
-repair_win(session_t *ps, win *w) {
+repair_win(session_t *ps, win *w, XDamageNotifyEvent *de) {
   if (IsViewable != w->a.map_state)
     return;
 
@@ -2146,12 +2159,8 @@ repair_win(session_t *ps, win *w) {
 
   if (!w->damaged) {
     parts = win_extents(ps, w);
-    set_ignore_next(ps);
-    XDamageSubtract(ps->dpy, w->damage, None, None);
   } else {
-    parts = XFixesCreateRegion(ps->dpy, 0, 0);
-    set_ignore_next(ps);
-    XDamageSubtract(ps->dpy, w->damage, None, parts);
+    parts = XFixesCreateRegion(ps->dpy, (XRectangle[]){de->area}, 1);
     XFixesTranslateRegion(ps->dpy, parts,
       w->a.x + w->a.border_width,
       w->a.y + w->a.border_width);
@@ -2347,6 +2356,8 @@ static void
 unmap_win(session_t *ps, win *w) {
   if (!w || IsUnmapped == w->a.map_state) return;
 
+  if (w->destroyed) return;
+
   // One last synchronization
   if (w->paint.pixmap)
     xr_sync(ps, w->paint.pixmap, &w->fence);
@@ -2378,19 +2389,22 @@ unmap_win(session_t *ps, win *w) {
 #endif
 }
 
-static opacity_t
-wid_get_opacity_prop(session_t *ps, Window wid, opacity_t def) {
-  opacity_t val = def;
+static bool
+wid_get_opacity_prop(session_t *ps, Window wid, opacity_t def, opacity_t *out) {
+  bool ret = false;
+  *out = def;
 
   winprop_t prop = wid_get_prop(ps, wid, ps->atom_opacity, 1L,
       XA_CARDINAL, 32);
 
-  if (prop.nitems)
-    val = *prop.data.p32;
+  if (prop.nitems) {
+    *out = *prop.data.p32;
+    ret = true;
+  }
 
   free_winprop(&prop);
 
-  return val;
+  return ret;
 }
 
 static double
@@ -2440,20 +2454,22 @@ calc_opacity(session_t *ps, win *w) {
     opacity = 0;
   else {
     // Try obeying opacity property and window type opacity firstly
-    if (OPAQUE == (opacity = w->opacity_prop)
-        && OPAQUE == (opacity = w->opacity_prop_client)) {
-      opacity = ps->o.wintype_opacity[w->window_type] * OPAQUE;
+    if(w->has_opacity_prop)
+      opacity = w->opacity_prop;
+    else if (!isnan(ps->o.wintype_opacity[w->window_type]))
+        opacity = ps->o.wintype_opacity[w->window_type] * OPAQUE;
+    else {
+      // Respect active_opacity only when the window is physically focused
+      if (win_is_focused_real(ps, w))
+        opacity = ps->o.active_opacity;
+      else if (false == w->focused)
+        // Respect inactive_opacity in some cases
+        opacity = ps->o.inactive_opacity;
     }
 
-    // Respect inactive_opacity in some cases
-    if (ps->o.inactive_opacity && false == w->focused
-        && (OPAQUE == opacity || ps->o.inactive_opacity_override)) {
-      opacity = ps->o.inactive_opacity;
-    }
-
-    // Respect active_opacity only when the window is physically focused
-    if (OPAQUE == opacity && ps->o.active_opacity && win_is_focused_real(ps, w))
-      opacity = ps->o.active_opacity;
+    // respect inactive override
+    if (ps->o.inactive_opacity_override && false == w->focused)
+          opacity = ps->o.inactive_opacity;
   }
 
   w->opacity_tgt = opacity;
@@ -2677,21 +2693,23 @@ win_update_opacity_rule(session_t *ps, win *w) {
     return;
 
 #ifdef CONFIG_C2
-  // If long is 32-bit, unfortunately there's no way could we express "unset",
-  // so we just entirely don't distinguish "unset" and OPAQUE
   opacity_t opacity = OPAQUE;
+  bool is_set = false;
   void *val = NULL;
-  if (c2_matchd(ps, w, ps->o.opacity_rules, &w->cache_oparule, &val))
+  if (c2_matchd(ps, w, ps->o.opacity_rules, &w->cache_oparule, &val)) {
     opacity = ((double) (long) val) / 100.0 * OPAQUE;
+    is_set = true;
+  }
 
-  if (opacity == w->opacity_set)
+  if (is_set == w->opacity_is_set && opacity == w->opacity_set)
     return;
 
-  if (OPAQUE != opacity)
-    wid_set_opacity_prop(ps, w->id, opacity);
-  else if (OPAQUE != w->opacity_set)
-    wid_rm_opacity_prop(ps, w->id);
   w->opacity_set = opacity;
+  w->opacity_is_set = is_set;
+  if (!is_set)
+    wid_rm_opacity_prop(ps, w->id);
+  else
+    wid_set_opacity_prop(ps, w->id, opacity);
 #endif
 }
 
@@ -2732,29 +2750,6 @@ win_on_factor_change(session_t *ps, win *w) {
   if (IsViewable == w->a.map_state && ps->o.unredir_if_possible_blacklist)
     w->unredir_if_possible_excluded = win_match(ps, w,
         ps->o.unredir_if_possible_blacklist, &w->cache_uipblst);
-}
-
-/**
- * Process needed window updates.
- */
-static void
-win_upd_run(session_t *ps, win *w, win_upd_t *pupd) {
-  if (pupd->shadow) {
-    win_determine_shadow(ps, w);
-    pupd->shadow = false;
-  }
-  if (pupd->fade) {
-    win_determine_fade(ps, w);
-    pupd->fade = false;
-  }
-  if (pupd->invert_color) {
-    win_determine_invert_color(ps, w);
-    pupd->invert_color = false;
-  }
-  if (pupd->focus) {
-    win_update_focused(ps, w);
-    pupd->focus = false;
-  }
 }
 
 /**
@@ -2959,8 +2954,9 @@ add_win(session_t *ps, Window id, Window prev) {
 
     .opacity = 0,
     .opacity_tgt = 0,
+    .has_opacity_prop = false,
     .opacity_prop = OPAQUE,
-    .opacity_prop_client = OPAQUE,
+    .opacity_is_set = false,
     .opacity_set = OPAQUE,
 
     .fade = false,
@@ -3047,7 +3043,7 @@ add_win(session_t *ps, Window id, Window prev) {
 
        // Create Damage for window
        set_ignore_next(ps);
-       new->damage = XDamageCreate(ps->dpy, id, XDamageReportNonEmpty);
+       new->damage = XDamageCreate(ps->dpy, id, XDamageReportRawRectangles);
   }
 
   calc_win_size(ps, new);
@@ -3377,17 +3373,18 @@ circulate_win(session_t *ps, XCirculateEvent *ce) {
 }
 
 static void
-finish_destroy_win(session_t *ps, Window id) {
-  win **prev = NULL, *w = NULL;
+finish_destroy_win(session_t *ps, win *w) {
+  assert(w->destroyed);
+  win **prev = NULL, *i = NULL;
 
 #ifdef DEBUG_EVENTS
-  printf_dbgf("(%#010lx): Starting...\n", id);
+  printf_dbgf("(%#010lx): Starting...\n", w->id);
 #endif
 
-  for (prev = &ps->list; (w = *prev); prev = &w->next) {
-    if (w->id == id && w->destroyed) {
+  for (prev = &ps->list; (i = *prev); prev = &i->next) {
+    if (w == i) {
 #ifdef DEBUG_EVENTS
-      printf_dbgf("(%#010lx \"%s\"): %p\n", id, w->name, w);
+      printf_dbgf("(%#010lx \"%s\"): %p\n", w->id, w->name, w);
 #endif
 
       finish_unmap_win(ps, w);
@@ -3413,7 +3410,7 @@ finish_destroy_win(session_t *ps, Window id) {
 
 static void
 destroy_callback(session_t *ps, win *w) {
-  finish_destroy_win(ps, w->id);
+  finish_destroy_win(ps, w);
 }
 
 static void
@@ -3474,7 +3471,7 @@ damage_win(session_t *ps, XDamageNotifyEvent *de) {
 
   if (!w) return;
 
-  repair_win(ps, w);
+  repair_win(ps, w, de);
 }
 
 /**
@@ -3493,7 +3490,8 @@ xerror(Display __attribute__((unused)) *dpy, XErrorEvent *ev) {
 
   if (ev->request_code == ps->composite_opcode
       && ev->minor_code == X_CompositeRedirectSubwindows) {
-    fprintf(stderr, "Another composite manager is already running\n");
+    fprintf(stderr, "Another composite manager is already running "
+        "(and does not handle _NET_WM_CM_Sn correctly)\n");
     exit(1);
   }
 
@@ -3613,8 +3611,6 @@ wid_get_prop_window(session_t *ps, Window wid, Atom aprop) {
  */
 static void
 win_update_focused(session_t *ps, win *w) {
-  bool focused_old = w->focused;
-
   if (UNSET != w->focused_force) {
     w->focused = w->focused_force;
   }
@@ -3642,6 +3638,7 @@ win_update_focused(session_t *ps, win *w) {
   // options depend on the output value of win_is_focused_real() instead of
   // w->focused
   w->flags |= WFLAG_OPCT_CHANGE;
+  w->flags |= WFLAG_FOCUS_CHANGE;
 }
 
 /**
@@ -4393,14 +4390,9 @@ ev_property_notify(session_t *ps, XPropertyEvent *ev) {
 
   // If _NET_WM_OPACITY changes
   if (ev->atom == ps->atom_opacity) {
-    win *w = NULL;
-    if ((w = find_win(ps, ev->window)))
-      w->opacity_prop = wid_get_opacity_prop(ps, w->id, OPAQUE);
-    else if (ps->o.detect_client_opacity
-        && (w = find_toplevel(ps, ev->window)))
-      w->opacity_prop_client = wid_get_opacity_prop(ps, w->client_win,
-            OPAQUE);
+    win *w = find_win(ps, ev->window) ?: find_toplevel(ps, ev->window);
     if (w) {
+      win_update_opacity_prop(ps, w);
       w->flags |= WFLAG_OPCT_CHANGE;
     }
   }
@@ -4521,6 +4513,16 @@ ev_screen_change_notify(session_t *ps,
   }
 }
 
+inline static void
+ev_selection_clear(session_t *ps,
+    XSelectionClearEvent __attribute__((unused)) *ev) {
+  // The only selection we own is the _NET_WM_CM_Sn selection.
+  // If we lose that one, we should exit.
+  fprintf(stderr, "Another composite manager started and "
+      "took the _NET_WM_CM_Sn selection.\n");
+  exit(1);
+}
+
 #if defined(DEBUG_EVENTS) || defined(DEBUG_RESTACK)
 /**
  * Get a window's name from window ID.
@@ -4613,6 +4615,9 @@ ev_handle(session_t *ps, XEvent *ev) {
     case PropertyNotify:
       ev_property_notify(ps, (XPropertyEvent *)ev);
       break;
+    case SelectionClear:
+      ev_selection_clear(ps, (XSelectionClearEvent *)ev);
+      break;
     default:
       if (ps->shape_exists && ev->type == ps->shape_event) {
         ev_shape_notify(ps, (XShapeEvent *) ev);
@@ -4640,6 +4645,8 @@ usage(int ret) {
 #define WARNING
   const static char *usage_text =
     "compton (" COMPTON_VERSION ")\n"
+    "This is the maintenance fork of compton, please report\n"
+    "bugs to https://github.com/yshui/compton\n\n"
     "usage: compton [options]\n"
     "Options:\n"
     "\n"
@@ -4725,6 +4732,15 @@ usage(int ret) {
     "\n"
     "--shadow-blue value\n"
     "  Blue color value of shadow (0.0 - 1.0, defaults to 0).\n"
+    "\n"
+    "--shadow-focused-red value\n"
+    "  Red color value of focused window shadow (0.0 - 1.0, defaults to 0).\n"
+    "\n"
+    "--shadow-focused-green value\n"
+    "  Green color value of focused window shadow (0.0 - 1.0, defaults to 0).\n"
+    "\n"
+    "--shadow-focused-blue value\n"
+    "  Blue color value of focused window shadow (0.0 - 1.0, defaults to 0).\n"
     "\n"
     "--inactive-opacity-override\n"
     "  Inactive opacity set by -i overrides value of _NET_WM_OPACITY.\n"
@@ -5065,6 +5081,7 @@ register_cm(session_t *ps) {
   if (!ps->o.no_x_selection) {
     unsigned len = strlen(REGISTER_PROP) + 2;
     int s = ps->scr;
+    Atom atom;
 
     while (s >= 10) {
       ++len;
@@ -5074,7 +5091,13 @@ register_cm(session_t *ps) {
     char *buf = malloc(len);
     snprintf(buf, len, REGISTER_PROP "%d", ps->scr);
     buf[len - 1] = '\0';
-    XSetSelectionOwner(ps->dpy, get_atom(ps, buf), ps->reg_win, 0);
+    atom = get_atom(ps, buf);
+
+    if (XGetSelectionOwner(ps->dpy, atom) != None) {
+      fprintf(stderr, "Another composite manager is already running\n");
+      return false;
+    }
+    XSetSelectionOwner(ps->dpy, atom, ps->reg_win, 0);
     free(buf);
   }
 
@@ -5213,7 +5236,7 @@ parse_matrix(session_t *ps, const char *src, const char **endptr) {
   int wid = 0, hei = 0;
   const char *pc = NULL;
   XFixed *matrix = NULL;
-  
+
   // Get matrix width and height
   {
     double val = 0.0;
@@ -5236,10 +5259,9 @@ parse_matrix(session_t *ps, const char *src, const char **endptr) {
     printf_errf("(): Width/height not odd.");
     goto parse_matrix_err;
   }
-  if (wid > 16 || hei > 16) {
-    printf_errf("(): Matrix width/height too large.");
-    goto parse_matrix_err;
-  }
+  if (wid > 16 || hei > 16)
+    printf_errf("(): Matrix width/height too large, may slow down"
+                "rendering, and/or consume lots of memory");
 
   // Allocate memory
   matrix = calloc(wid * hei + 2, sizeof(XFixed));
@@ -5734,6 +5756,14 @@ parse_config(session_t *ps, struct options_tmp *pcfgtmp) {
   config_lookup_float(&cfg, "shadow-green", &ps->o.shadow_green);
   // --shadow-blue
   config_lookup_float(&cfg, "shadow-blue", &ps->o.shadow_blue);
+
+  // --shadow-focused-red
+  config_lookup_float(&cfg, "shadow-focused-red", &ps->o.shadow_focused_red);
+  // --shadow-focused-green
+  config_lookup_float(&cfg, "shadow-focused-green", &ps->o.shadow_focused_green);
+  // --shadow-focused-blue
+  config_lookup_float(&cfg, "shadow-focused-blue", &ps->o.shadow_focused_blue);
+
   // --shadow-exclude-reg
   if (config_lookup_string(&cfg, "shadow-exclude-reg", &sval)
       && !parse_geometry(ps, sval, &ps->o.shadow_exclude_reg_geom))
@@ -5853,8 +5883,10 @@ parse_config(session_t *ps, struct options_tmp *pcfgtmp) {
           ps->o.wintype_fade[i] = (bool) ival;
         if (config_setting_lookup_bool(setting, "focus", &ival))
           ps->o.wintype_focus[i] = (bool) ival;
-        config_setting_lookup_float(setting, "opacity",
-            &ps->o.wintype_opacity[i]);
+
+        double fval;
+        if (config_setting_lookup_float(setting, "opacity", &fval))
+          ps->o.wintype_opacity[i] = normalize_d(fval);
       }
     }
   }
@@ -5891,6 +5923,9 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
     { "shadow-red", required_argument, NULL, 257 },
     { "shadow-green", required_argument, NULL, 258 },
     { "shadow-blue", required_argument, NULL, 259 },
+    { "shadow-focused-red", required_argument, NULL, 800 },
+    { "shadow-focused-green", required_argument, NULL, 801 },
+    { "shadow-focused-blue", required_argument, NULL, 802 },
     { "inactive-opacity-override", no_argument, NULL, 260 },
     { "inactive-dim", required_argument, NULL, 261 },
     { "mark-wmwin-focused", no_argument, NULL, 262 },
@@ -5996,7 +6031,7 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
   struct options_tmp cfgtmp = {
     .no_dock_shadow = false,
     .no_dnd_shadow = false,
-    .menu_opacity = 1.0,
+    .menu_opacity = NAN,
   };
   bool shadow_enable = false, fading_enable = false;
   char *lc_numeric_old = mstrcpy(setlocale(LC_NUMERIC, NULL));
@@ -6004,7 +6039,7 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
   for (i = 0; i < NUM_WINTYPES; ++i) {
     ps->o.wintype_fade[i] = false;
     ps->o.wintype_shadow[i] = false;
-    ps->o.wintype_opacity[i] = 1.0;
+    ps->o.wintype_opacity[i] = NAN;
   }
 
   // Enforce LC_NUMERIC locale "C" here to make sure dots are recognized
@@ -6089,13 +6124,22 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
         // --shadow-red
         ps->o.shadow_red = atof(optarg);
         break;
+      case 800:
+        ps->o.shadow_focused_red = atof(optarg);
+        break;
       case 258:
         // --shadow-green
         ps->o.shadow_green = atof(optarg);
         break;
+      case 801:
+        ps->o.shadow_focused_green = atof(optarg);
+        break;
       case 259:
         // --shadow-blue
         ps->o.shadow_blue = atof(optarg);
+        break;
+      case 802:
+        ps->o.shadow_focused_blue = atof(optarg);
         break;
       P_CASEBOOL(260, inactive_opacity_override);
       case 261:
@@ -6242,18 +6286,15 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
   ps->o.shadow_red = normalize_d(ps->o.shadow_red);
   ps->o.shadow_green = normalize_d(ps->o.shadow_green);
   ps->o.shadow_blue = normalize_d(ps->o.shadow_blue);
+  ps->o.shadow_focused_red = normalize_d(ps->o.shadow_focused_red);
+  ps->o.shadow_focused_green = normalize_d(ps->o.shadow_focused_green);
+  ps->o.shadow_focused_blue = normalize_d(ps->o.shadow_focused_blue);
   ps->o.inactive_dim = normalize_d(ps->o.inactive_dim);
   ps->o.frame_opacity = normalize_d(ps->o.frame_opacity);
   ps->o.shadow_opacity = normalize_d(ps->o.shadow_opacity);
   cfgtmp.menu_opacity = normalize_d(cfgtmp.menu_opacity);
   ps->o.refresh_rate = normalize_i_range(ps->o.refresh_rate, 0, 300);
   ps->o.alpha_step = normalize_d_range(ps->o.alpha_step, 0.01, 1.0);
-  if (OPAQUE == ps->o.inactive_opacity) {
-    ps->o.inactive_opacity = 0;
-  }
-  if (OPAQUE == ps->o.active_opacity) {
-    ps->o.active_opacity = 0;
-  }
   if (shadow_enable)
     wintype_arr_enable(ps->o.wintype_shadow);
   ps->o.wintype_shadow[WINTYPE_DESKTOP] = false;
@@ -6263,7 +6304,7 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
     ps->o.wintype_shadow[WINTYPE_DND] = false;
   if (fading_enable)
     wintype_arr_enable(ps->o.wintype_fade);
-  if (1.0 != cfgtmp.menu_opacity) {
+  if (!isnan(cfgtmp.menu_opacity)) {
     ps->o.wintype_opacity[WINTYPE_DROPDOWN_MENU] = cfgtmp.menu_opacity;
     ps->o.wintype_opacity[WINTYPE_POPUP_MENU] = cfgtmp.menu_opacity;
   }
@@ -6278,7 +6319,10 @@ get_cfg(session_t *ps, int argc, char *const *argv, bool first_pass) {
   // Other variables determined by options
 
   // Determine whether we need to track focus changes
-  if (ps->o.inactive_opacity || ps->o.active_opacity || ps->o.inactive_dim) {
+  if (ps->o.inactive_opacity != ps->o.active_opacity || ps->o.inactive_dim ||
+      ps->o.shadow_focused_red != ps->o.shadow_red ||
+      ps->o.shadow_focused_green != ps->o.shadow_green ||
+      ps->o.shadow_focused_blue != ps->o.shadow_blue) {
     ps->o.track_focus = true;
   }
 
@@ -6790,11 +6834,10 @@ init_filters(session_t *ps) {
         }
 #ifdef CONFIG_VSYNC_OPENGL
       case BKEND_GLX:
-        {
-          if (!glx_init_blur(ps))
-            return false;
-        }
+        return glx_init_blur(ps);
 #endif
+      default:
+        assert(false);
     }
   }
 
@@ -7206,6 +7249,9 @@ session_init(session_t *ps_old, int argc, char **argv) {
       .shadow_red = 0.0,
       .shadow_green = 0.0,
       .shadow_blue = 0.0,
+      .shadow_focused_red = 0.0,
+      .shadow_focused_green = 0.0,
+      .shadow_focused_blue = 0.0,
       .shadow_radius = 12,
       .shadow_offset_x = -15,
       .shadow_offset_y = -15,
@@ -7224,10 +7270,10 @@ session_init(session_t *ps_old, int argc, char **argv) {
       .no_fading_destroyed_argb = false,
       .fade_blacklist = NULL,
 
-      .wintype_opacity = { 0.0 },
-      .inactive_opacity = 0,
+      .wintype_opacity = { NAN },
+      .inactive_opacity = OPAQUE,
       .inactive_opacity_override = false,
-      .active_opacity = 0,
+      .active_opacity = OPAQUE,
       .frame_opacity = 0.0,
       .detect_client_opacity = false,
       .alpha_step = 0.03,
@@ -7603,6 +7649,9 @@ session_init(session_t *ps_old, int argc, char **argv) {
     ps->cshadow_picture = solid_picture(ps, true, 1,
         ps->o.shadow_red, ps->o.shadow_green, ps->o.shadow_blue);
   }
+
+  ps->cshadow_picture_focused = solid_picture(ps, true, 1,
+    ps->o.shadow_focused_red, ps->o.shadow_focused_green, ps->o.shadow_focused_blue);
 
   fds_insert(ps, ConnectionNumber(ps->dpy), POLLIN);
   ps->tmout_unredir = timeout_insert(ps, ps->o.unredir_if_possible_delay,
@@ -7983,3 +8032,5 @@ main(int argc, char **argv) {
 
   return 0;
 }
+
+// vim: set et sw=2 :

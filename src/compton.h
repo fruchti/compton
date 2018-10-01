@@ -733,6 +733,8 @@ set_tgt_clip(session_t *ps, XserverRegion reg, const reg_data_t *pcache_reg) {
       glx_set_clip(ps, reg, pcache_reg);
       break;
 #endif
+    default:
+      assert(false);
   }
 }
 
@@ -761,7 +763,7 @@ static void
 add_damage(session_t *ps, XserverRegion damage);
 
 static void
-repair_win(session_t *ps, win *w);
+repair_win(session_t *ps, win *w, XDamageNotifyEvent *de);
 
 static wintype_t
 wid_get_prop_wintype(session_t *ps, Window w);
@@ -781,21 +783,29 @@ unmap_callback(session_t *ps, win *w);
 static void
 unmap_win(session_t *ps, win *w);
 
-static opacity_t
-wid_get_opacity_prop(session_t *ps, Window wid, opacity_t def);
+static bool
+wid_get_opacity_prop(session_t *ps, Window wid, opacity_t def, opacity_t *out);
 
 /**
  * Reread opacity property of a window.
  */
 static inline void
 win_update_opacity_prop(session_t *ps, win *w) {
-  w->opacity_prop = wid_get_opacity_prop(ps, w->id, OPAQUE);
-  if (!ps->o.detect_client_opacity || !w->client_win
-      || w->id == w->client_win)
-    w->opacity_prop_client = OPAQUE;
-  else
-    w->opacity_prop_client = wid_get_opacity_prop(ps, w->client_win,
-          OPAQUE);
+  // get frame opacity first
+  w->has_opacity_prop =
+    wid_get_opacity_prop(ps, w->id, OPAQUE, &w->opacity_prop);
+
+  if (w->has_opacity_prop)
+    // opacity found
+    return;
+
+  if (ps->o.detect_client_opacity && w->client_win && w->id == w->client_win)
+    // checking client opacity not allowed
+    return;
+
+  // get client opacity
+  w->has_opacity_prop =
+    wid_get_opacity_prop(ps, w->client_win, OPAQUE, &w->opacity_prop);
 }
 
 static double
@@ -886,9 +896,6 @@ static void
 win_on_factor_change(session_t *ps, win *w);
 
 static void
-win_upd_run(session_t *ps, win *w, win_upd_t *pupd);
-
-static void
 calc_win_size(session_t *ps, win *w);
 
 static void
@@ -919,7 +926,7 @@ static void
 circulate_win(session_t *ps, XCirculateEvent *ce);
 
 static void
-finish_destroy_win(session_t *ps, Window id);
+finish_destroy_win(session_t *ps, win *w);
 
 static void
 destroy_callback(session_t *ps, win *w);
@@ -1352,3 +1359,5 @@ session_run(session_t *ps);
 
 static void
 reset_enable(int __attribute__((unused)) signum);
+
+// vim: set et sw=2 :

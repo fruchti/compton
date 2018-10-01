@@ -716,6 +716,16 @@ glx_cmp_fbconfig(session_t *ps,
     return -1;
   if (!pfbc_b)
     return 1;
+  int tmpattr;
+
+  // Avoid 10-bit colors
+  glXGetFBConfigAttrib(ps->dpy, pfbc_a->cfg, GLX_RED_SIZE, &tmpattr);
+  if (tmpattr != 8)
+    return -1;
+
+  glXGetFBConfigAttrib(ps->dpy, pfbc_b->cfg, GLX_RED_SIZE, &tmpattr);
+  if (tmpattr != 8)
+    return 1;
 
 #define P_CMPATTR_LT(attr) { if ((result = glx_cmp_fbconfig_cmpattr(ps, pfbc_a, pfbc_b, (attr)))) return -result; }
 #define P_CMPATTR_GT(attr) { if ((result = glx_cmp_fbconfig_cmpattr(ps, pfbc_a, pfbc_b, (attr)))) return result; }
@@ -1662,8 +1672,10 @@ glx_render_(session_t *ps, const glx_texture_t *ptex,
 
 /**
  * Render a region with color.
+ *
+ * Unused but can be useful for debugging
  */
-static void
+static void __attribute__((unused))
 glx_render_color(session_t *ps, int dx, int dy, int width, int height, int z,
     XserverRegion reg_tgt, const reg_data_t *pcache_reg) {
   static int color = 0;
@@ -1698,8 +1710,10 @@ glx_render_color(session_t *ps, int dx, int dy, int width, int height, int z,
 
 /**
  * Render a region with dots.
+ *
+ * Unused but can be useful for debugging
  */
-static void
+static void __attribute__((unused))
 glx_render_dots(session_t *ps, int dx, int dy, int width, int height, int z,
     XserverRegion reg_tgt, const reg_data_t *pcache_reg) {
   glColor4f(0.0f, 0.0f, 0.0f, 1.0f);

@@ -239,6 +239,7 @@
 #define WFLAG_POS_CHANGE    0x0002
 // Window opacity / dim state changed
 #define WFLAG_OPCT_CHANGE   0x0004
+#define WFLAG_FOCUS_CHANGE   0x0008
 
 // === Types ===
 
@@ -671,6 +672,7 @@ typedef struct _options_t {
   bool wintype_shadow[NUM_WINTYPES];
   /// Red, green and blue tone of the shadow.
   double shadow_red, shadow_green, shadow_blue;
+  double shadow_focused_red, shadow_focused_green, shadow_focused_blue;
   int shadow_radius;
   int shadow_offset_x, shadow_offset_y;
   double shadow_opacity;
@@ -948,6 +950,7 @@ typedef struct _session_t {
   Picture black_picture;
   /// 1x1 Picture of the shadow color.
   Picture cshadow_picture;
+  Picture cshadow_picture_focused;
   /// 1x1 white Picture.
   Picture white_picture;
   /// Gaussian map of shadow.
@@ -1189,12 +1192,13 @@ typedef struct _win {
   opacity_t opacity;
   /// Target window opacity.
   opacity_t opacity_tgt;
+  /// true if window (or client window, for broken window managers
+  /// not transferring client window's _NET_WM_OPACITY value) has opacity prop
+  bool has_opacity_prop;
   /// Cached value of opacity window attribute.
   opacity_t opacity_prop;
-  /// Cached value of opacity window attribute on client window. For
-  /// broken window managers not transferring client window's
-  /// _NET_WM_OPACITY value
-  opacity_t opacity_prop_client;
+  /// true if opacity is set by some rules
+  bool opacity_is_set;
   /// Last window opacity value we set.
   opacity_t opacity_set;
 
@@ -2435,7 +2439,7 @@ xr_sync_(session_t *ps, Drawable d
     if (!*pfence)
       *pfence = XSyncCreateFence(ps->dpy, d, False);
     if (*pfence) {
-      Bool triggered = False;
+      Bool __attribute__((unused)) triggered = False;
       /* if (XSyncQueryFence(ps->dpy, *pfence, &triggered) && triggered)
         XSyncResetFence(ps->dpy, *pfence); */
       // The fence may fail to be created (e.g. because of died drawable)
