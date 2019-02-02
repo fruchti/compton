@@ -261,6 +261,8 @@ typedef struct glx_prog_main {
   GLint unifm_size;
   /// Location of uniform "scale" in window GLSL program.
   GLint unifm_scale;
+  /// Location of uniform "root_size" in window GLSL program.
+  GLint unifm_root_size;
   /// Location of uniform "tex" in window GLSL program.
   GLint unifm_tex;
 } glx_prog_main_t;
@@ -272,6 +274,7 @@ typedef struct glx_prog_main {
   .unifm_position = -1, \
   .unifm_size = -1, \
   .unifm_scale = -1, \
+  .unifm_root_size = -1, \
   .unifm_tex = -1, \
 }
 

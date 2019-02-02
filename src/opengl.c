@@ -433,6 +433,7 @@ glx_free_prog_main(session_t *ps, glx_prog_main_t *pprogram) {
   pprogram->unifm_position = -1;
   pprogram->unifm_size = -1;
   pprogram->unifm_scale = -1;
+  pprogram->unifm_root_size = -1;
   pprogram->unifm_tex = -1;
 }
 
@@ -694,6 +695,7 @@ glx_load_prog_main(session_t *ps,
   P_GET_UNIFM_LOC("position", unifm_position);
   P_GET_UNIFM_LOC("size", unifm_size);
   P_GET_UNIFM_LOC("scale", unifm_scale);
+  P_GET_UNIFM_LOC("root_size", unifm_root_size);
   P_GET_UNIFM_LOC("tex", unifm_tex);
 #undef P_GET_UNIFM_LOC
 
@@ -1313,6 +1315,8 @@ glx_render(session_t *ps, const glx_texture_t *ptex,
       glUniform2ui(pprogram->unifm_size, width, height);
     if (pprogram->unifm_scale >= 0)
       glUniform2f(pprogram->unifm_scale, 1.0f / width, 1.0f / height);
+    if (pprogram->unifm_root_size >= 0)
+      glUniform2f(pprogram->unifm_root_size, ps->root_width, ps->root_height);
   }
 
   //log_trace("Draw: %d, %d, %d, %d -> %d, %d (%d, %d) z %d", x, y, width, height,
